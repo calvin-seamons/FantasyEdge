@@ -1,33 +1,84 @@
 """
-NFL Player Betting Lines Fetcher
----------------------------------
-A comprehensive class to fetch betting lines and odds for NFL players from multiple sources.
-Primary source: The Odds API (with free tier available)
-Secondary sources: Web scraping as fallback
+Fantasy Edge - NFL Player Analysis & Lineup Optimization
+--------------------------------------------------------
+A comprehensive system to fetch betting lines and convert them into fantasy football
+projections for optimal lineup decisions. Uses betting market data to project 
+fantasy performance and compare players based on league scoring settings.
 
-Author: SetTheLine App
-Date: 2024
+Primary source: The Odds API (with free tier available)
+Focus: Fantasy football lineup optimization and player comparisons
+
+Author: FantasyEdge
+Date: 2024-2025
 """
 
 import requests
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import json
 from dataclasses import dataclass, asdict
 from enum import Enum
 import time
 import os
-from dotenv import load_dotenv
+import sys
+
+# Try to import dotenv, but don't fail if it's not available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Load immediately when module is imported
+except ImportError:
+    print("Warning: python-dotenv not installed. Environment variables must be set manually.")
+except Exception as e:
+    print(f"Warning: Could not load .env file: {e}")
+
+
+class ProgressBar:
+    """Simple progress bar for terminal"""
+    def __init__(self, total, description="Processing"):
+        self.total = total
+        self.current = 0
+        self.description = description
+        self.width = 40
+        
+    def update(self, increment=1):
+        self.current += increment
+        self._display()
+        
+    def _display(self):
+        if self.total == 0:
+            return
+            
+        progress = self.current / self.total
+        filled = int(self.width * progress)
+        bar = "█" * filled + "░" * (self.width - filled)
+        percent = int(progress * 100)
+        
+        sys.stdout.write(f"\r{self.description}: [{bar}] {percent}% ({self.current}/{self.total})")
+        sys.stdout.flush()
+        
+        if self.current >= self.total:
+            print()  # New line when complete
+
+
+class Position(Enum):
+    """Enum for fantasy football positions"""
+    QB = "QB"
+    RB = "RB" 
+    WR = "WR"
+    TE = "TE"
+    K = "K"
+    DST = "DST"
 
 
 class PropType(Enum):
-    """Enum for different types of player props"""
+    """Enum for different types of player props that affect fantasy scoring"""
     # Passing props
     PASS_TDS = "player_pass_tds"
     PASS_YARDS = "player_pass_yds"
     PASS_COMPLETIONS = "player_pass_completions"
     PASS_ATTEMPTS = "player_pass_attempts"
     PASS_LONGEST_COMPLETION = "player_pass_longest_completion"
+    PASS_INTERCEPTIONS = "player_pass_interceptions"
     
     # Rushing props
     RUSH_YARDS = "player_rush_yds"
@@ -58,6 +109,38 @@ class PropType(Enum):
 
 
 @dataclass
+class FantasyScoring:
+    """Data class for fantasy league scoring settings"""
+    # Passing
+    pass_yards_per_point: float = 25.0  # 1 point per 25 yards
+    pass_td_points: float = 4.0
+    pass_interception_points: float = -2.0
+    pass_completion_points: float = 0.0
+    
+    # Rushing
+    rush_yards_per_point: float = 10.0  # 1 point per 10 yards
+    rush_td_points: float = 6.0
+    
+    # Receiving
+    reception_points: float = 1.0  # PPR scoring
+    receiving_yards_per_point: float = 10.0
+    receiving_td_points: float = 6.0
+    
+    # Kicking
+    fg_points: float = 3.0
+    extra_point_points: float = 1.0
+    
+    # Bonuses
+    long_td_bonus: float = 0.0  # Bonus for 40+ yard TDs
+    long_pass_bonus: float = 0.0  # Bonus for 300+ passing yards
+    long_rush_bonus: float = 0.0  # Bonus for 100+ rushing yards
+    long_receiving_bonus: float = 0.0  # Bonus for 100+ receiving yards
+    
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
 class BettingLine:
     """Data class for a single betting line"""
     player_name: str
@@ -80,36 +163,88 @@ class BettingLine:
         }
 
 
-@dataclass
-class PlayerProps:
-    """Data class containing all props for a single player"""
+@dataclass 
+class FantasyProjection:
+    """Data class for fantasy projections derived from betting lines"""
     player_name: str
-    team: Optional[str]
-    opponent: Optional[str]
-    game_time: Optional[datetime]
-    props: List[BettingLine]
+    position: Position
+    projected_points: float
+    confidence: float  # 0-1 scale based on line consensus
+    breakdown: Dict[str, float]  # Points breakdown by category
     
     def to_dict(self):
         return {
             'player_name': self.player_name,
-            'team': self.team,
-            'opponent': self.opponent,
-            'game_time': self.game_time.isoformat() if self.game_time else None,
-            'props': [prop.to_dict() for prop in self.props]
+            'position': self.position.value if self.position else None,
+            'projected_points': self.projected_points,
+            'confidence': self.confidence,
+            'breakdown': self.breakdown
         }
 
 
-class NFLBettingLinesFetcher:
+@dataclass
+class PlayerRosterInfo:
+    """Data class for player roster information"""
+    player_name: str
+    position: Position
+    team: str
+    opponent: str
+    game_time: datetime
+    is_available: bool = True  # Whether player is on your roster/available
+    salary: Optional[int] = None  # For DFS
+    ownership_projection: Optional[float] = None  # For DFS
+    
+    def to_dict(self):
+        return {
+            'player_name': self.player_name,
+            'position': self.position.value if self.position else None,
+            'team': self.team,
+            'opponent': self.opponent,
+            'game_time': self.game_time.isoformat() if self.game_time else None,
+            'is_available': self.is_available,
+            'salary': self.salary,
+            'ownership_projection': self.ownership_projection
+        }
+
+
+@dataclass
+class PlayerProps:
+    """Data class containing all props and fantasy analysis for a single player"""
+    player_name: str
+    position: Optional[Position]
+    roster_info: Optional[PlayerRosterInfo]
+    betting_lines: List[BettingLine]
+    fantasy_projection: Optional[FantasyProjection]
+    
+    def to_dict(self):
+        return {
+            'player_name': self.player_name,
+            'position': self.position.value if self.position else None,
+            'roster_info': self.roster_info.to_dict() if self.roster_info else None,
+            'betting_lines': [line.to_dict() for line in self.betting_lines],
+            'fantasy_projection': self.fantasy_projection.to_dict() if self.fantasy_projection else None
+        }
+
+
+class FantasyEdgeAnalyzer:
     """
-    Main class to fetch NFL player betting lines from various sources.
+    Main class to fetch NFL player betting lines and convert them into fantasy projections
+    for optimal lineup decisions and player comparisons.
     
     Usage:
         # API key will be loaded from .env file automatically
-        fetcher = NFLBettingLinesFetcher()
-        lines = fetcher.get_player_lines("Dak Prescott")
+        analyzer = FantasyEdgeAnalyzer()
         
-        # Or provide API key directly
-        fetcher = NFLBettingLinesFetcher(api_key="your_api_key_here")
+        # Set your league scoring
+        scoring = FantasyScoring(reception_points=0.5)  # Half PPR
+        analyzer.set_scoring(scoring)
+        
+        # Compare two players
+        comparison = analyzer.compare_players("Josh Allen", "Lamar Jackson")
+        
+        # Get optimal lineup from your roster
+        roster = ["Josh Allen", "Saquon Barkley", "Tyreek Hill", ...]
+        lineup = analyzer.optimize_lineup(roster)
     """
     
     # The Odds API endpoints
@@ -128,18 +263,22 @@ class NFLBettingLinesFetcher:
     
     def __init__(self, api_key: Optional[str] = None, bookmakers: Optional[List[str]] = None):
         """
-        Initialize the fetcher with API credentials.
+        Initialize the analyzer with API credentials.
         
         Args:
             api_key: The Odds API key (get free tier at https://the-odds-api.com).
                      If not provided, will attempt to load from ODDS_API_KEY environment variable.
             bookmakers: List of bookmaker keys to fetch from
         """
-        # Load environment variables from .env file
-        load_dotenv()
-        
         # Get API key from parameter or environment variable
         self.api_key = api_key or os.getenv('ODDS_API_KEY')
+        
+        # Debug: Print what we found (only show partial key for security)
+        if self.api_key:
+            print(f"✅ API key loaded: {self.api_key[:8]}..." + "*" * (len(self.api_key) - 8))
+        else:
+            print("❌ No API key found in environment or parameter")
+            
         self.bookmakers = bookmakers or self.DEFAULT_BOOKMAKERS
         self.session = requests.Session()
         self.session.headers.update({
@@ -150,56 +289,409 @@ class NFLBettingLinesFetcher:
         self._cache = {}
         self._cache_timeout = 300  # 5 minutes
         
-    def get_player_lines(self, player_name: str, prop_types: Optional[List[PropType]] = None) -> PlayerProps:
+        # Default scoring system (can be updated)
+        self.scoring = FantasyScoring()
+        
+        # Player position mapping (would ideally come from a database)
+        self.position_map = self._load_position_map()
+        
+    def set_scoring(self, scoring: FantasyScoring):
+        """Update the fantasy scoring settings"""
+        self.scoring = scoring
+        
+    def _load_position_map(self) -> Dict[str, Position]:
         """
-        Get all available betting lines for a specific player.
+        Load player position mapping. In production, this would come from a database.
+        For now, return a basic mapping that can be expanded.
+        """
+        # This is a simplified version - in production you'd have a complete player database
+        return {
+            # QBs
+            "Josh Allen": Position.QB,
+            "Lamar Jackson": Position.QB, 
+            "Dak Prescott": Position.QB,
+            "Patrick Mahomes": Position.QB,
+            "Joe Burrow": Position.QB,
+            "Justin Herbert": Position.QB,
+            
+            # RBs
+            "Saquon Barkley": Position.RB,
+            "Christian McCaffrey": Position.RB,
+            "Derrick Henry": Position.RB,
+            "Alvin Kamara": Position.RB,
+            "Jonathan Taylor": Position.RB,
+            "James Conner": Position.RB,
+            "Keontay Johnson": Position.RB,
+            "Bucky Robinson": Position.RB,
+            
+            # WRs
+            "Tyreek Hill": Position.WR,
+            "Davante Adams": Position.WR,
+            "Cooper Kupp": Position.WR,
+            "Stefon Diggs": Position.WR,
+            "CeeDee Lamb": Position.WR,
+            "Tee Higgins": Position.WR,
+            "DK Metcalf": Position.WR,
+            "DeVonta Smith": Position.WR,
+            "Darnell Mooney": Position.WR,
+            "Jaylen Waddle": Position.WR,
+            "Mike Evans": Position.WR,
+            
+            # TEs
+            "Travis Kelce": Position.TE,
+            "Mark Andrews": Position.TE,
+            "George Kittle": Position.TE,
+            "Jaylen Smith": Position.TE,
+        }
+        
+    def get_player_analysis(self, player_name: str, prop_types: Optional[List[PropType]] = None) -> PlayerProps:
+        """
+        Get comprehensive fantasy analysis for a specific player including betting lines and projections.
         
         Args:
             player_name: Name of the NFL player
             prop_types: Specific prop types to fetch (None = all available)
             
         Returns:
-            PlayerProps object containing all found betting lines
+            PlayerProps object containing betting lines and fantasy projections
         """
         if not self.api_key:
             raise ValueError("API key required. Get one free at https://the-odds-api.com")
         
-        # First, get current NFL games
-        games = self._get_nfl_games()
+        print(f"🔍 Analyzing {player_name}...")
         
-        # Find games and fetch props
+        # Get betting lines (using existing logic)
+        games = self._get_nfl_games()
         all_props = []
         player_team = None
         player_opponent = None
         game_time = None
         
+        # Progress bar for game analysis
+        progress = ProgressBar(len(games), f"Searching for {player_name}")
+        
         for game in games:
-            # Get event odds with player props
+            progress.update()
             event_props = self._get_event_props(game['id'], prop_types)
-            
-            # Filter for specific player
             player_lines = self._filter_player_props(event_props, player_name)
             
             if player_lines:
                 all_props.extend(player_lines)
-                # Set team info from first match
                 if not player_team:
                     player_team = self._determine_player_team(game, player_name)
                     player_opponent = game['away_team'] if player_team == game['home_team'] else game['home_team']
                     game_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
-                break  # Stop after finding the first game with data for testing
+                break
+        
+        # Get player position
+        position = self.position_map.get(player_name)
+        
+        # Create roster info
+        roster_info = PlayerRosterInfo(
+            player_name=player_name,
+            position=position,
+            team=player_team or "Unknown",
+            opponent=player_opponent or "Unknown", 
+            game_time=game_time or datetime.now()
+        ) if player_team else None
+        
+        # Generate fantasy projection
+        fantasy_projection = self._generate_fantasy_projection(player_name, position, all_props)
         
         return PlayerProps(
             player_name=player_name,
-            team=player_team,
-            opponent=player_opponent,
-            game_time=game_time,
-            props=all_props
+            position=position,
+            roster_info=roster_info,
+            betting_lines=all_props,
+            fantasy_projection=fantasy_projection
         )
+    
+    def compare_players(self, player1_name: str, player2_name: str) -> Dict[str, Any]:
+        """
+        Compare two players and determine which is the better fantasy play.
+        
+        Args:
+            player1_name: Name of first player
+            player2_name: Name of second player
+            
+        Returns:
+            Dictionary with comparison analysis
+        """
+        player1 = self.get_player_analysis(player1_name)
+        player2 = self.get_player_analysis(player2_name)
+        
+        if not player1.fantasy_projection or not player2.fantasy_projection:
+            return {"error": "Could not generate projections for one or both players"}
+        
+        proj1 = player1.fantasy_projection
+        proj2 = player2.fantasy_projection
+        
+        # Calculate advantage
+        point_advantage = proj1.projected_points - proj2.projected_points
+        confidence_advantage = proj1.confidence - proj2.confidence
+        
+        # Determine recommendation
+        if abs(point_advantage) < 1.0:
+            recommendation = "Very close - consider other factors"
+        elif point_advantage > 0:
+            recommendation = f"Start {player1_name} (+{point_advantage:.2f} projected points)"
+        else:
+            recommendation = f"Start {player2_name} (+{abs(point_advantage):.2f} projected points)"
+        
+        return {
+            'player1': player1.to_dict(),
+            'player2': player2.to_dict(),
+            'point_advantage': point_advantage,
+            'confidence_advantage': confidence_advantage,
+            'recommendation': recommendation,
+            'analysis': {
+                'closer_player': player1_name if point_advantage > 0 else player2_name,
+                'point_difference': abs(point_advantage),
+                'confidence_difference': abs(confidence_advantage)
+            }
+        }
+    
+    def optimize_lineup(self, roster_players: List[str], lineup_requirements: Optional[Dict[Position, int]] = None) -> Dict[str, Any]:
+        """
+        Optimize fantasy lineup from available roster players.
+        
+        Args:
+            roster_players: List of player names on your roster
+            lineup_requirements: Dictionary of position requirements (e.g., {Position.QB: 1, Position.RB: 2})
+            
+        Returns:
+            Dictionary with optimal lineup and analysis
+        """
+        if not lineup_requirements:
+            # Default lineup requirements (standard fantasy)
+            lineup_requirements = {
+                Position.QB: 1,
+                Position.RB: 2, 
+                Position.WR: 2,
+                Position.TE: 1,
+                Position.K: 1
+            }
+        
+        print(f"🎯 Optimizing lineup from {len(roster_players)} players...")
+        
+        # Get analysis for all roster players
+        player_analyses = {}
+        progress = ProgressBar(len(roster_players), "Analyzing roster")
+        
+        for player_name in roster_players:
+            progress.update()
+            try:
+                analysis = self.get_player_analysis(player_name)
+                if analysis.fantasy_projection:
+                    player_analyses[player_name] = analysis
+            except Exception as e:
+                print(f"\n⚠️  Could not analyze {player_name}: {e}")
+                continue
+        
+        # Group by position
+        players_by_position = {}
+        for player_name, analysis in player_analyses.items():
+            position = analysis.position
+            if position not in players_by_position:
+                players_by_position[position] = []
+            players_by_position[position].append(analysis)
+        
+        # Sort each position by projected points
+        for position in players_by_position:
+            players_by_position[position].sort(
+                key=lambda x: x.fantasy_projection.projected_points if x.fantasy_projection else 0,
+                reverse=True
+            )
+        
+        # Build optimal lineup
+        optimal_lineup = {}
+        total_projected_points = 0
+        
+        for position, required_count in lineup_requirements.items():
+            if position in players_by_position:
+                selected = players_by_position[position][:required_count]
+                optimal_lineup[position] = selected
+                total_projected_points += sum(
+                    p.fantasy_projection.projected_points if p.fantasy_projection else 0
+                    for p in selected
+                )
+        
+        return {
+            'optimal_lineup': {pos.value: [p.player_name for p in players] 
+                             for pos, players in optimal_lineup.items()},
+            'total_projected_points': total_projected_points,
+            'lineup_details': {pos.value: [p.to_dict() for p in players] 
+                             for pos, players in optimal_lineup.items()},
+            'bench_players': {pos.value: [p.player_name for p in players[lineup_requirements.get(pos, 0):]] 
+                            for pos, players in players_by_position.items() if pos in lineup_requirements}
+        }
+    
+    def _generate_fantasy_projection(self, player_name: str, position: Optional[Position], 
+                                   betting_lines: List[BettingLine]) -> Optional[FantasyProjection]:
+        """
+        Convert betting lines into fantasy point projections based on scoring settings.
+        """
+        if not betting_lines or not position:
+            return None
+        
+        # Get consensus lines (average across bookmakers for each prop)
+        consensus_lines = self._get_consensus_lines(betting_lines)
+        
+        projected_points = 0.0
+        breakdown = {}
+        confidence_scores = []
+        
+        # Convert each prop to fantasy points based on position
+        if position == Position.QB:
+            projected_points, breakdown, confidence_scores = self._project_qb_points(consensus_lines)
+        elif position == Position.RB:
+            projected_points, breakdown, confidence_scores = self._project_rb_points(consensus_lines)
+        elif position == Position.WR:
+            projected_points, breakdown, confidence_scores = self._project_wr_points(consensus_lines)
+        elif position == Position.TE:
+            projected_points, breakdown, confidence_scores = self._project_te_points(consensus_lines)
+        
+        # Calculate overall confidence (average of individual prop confidences)
+        overall_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.5
+        
+        return FantasyProjection(
+            player_name=player_name,
+            position=position,
+            projected_points=projected_points,
+            confidence=overall_confidence,
+            breakdown=breakdown
+        )
+    
+    def _get_consensus_lines(self, betting_lines: List[BettingLine]) -> Dict[str, float]:
+        """Get consensus lines by averaging across bookmakers for each prop type"""
+        prop_lines = {}
+        
+        for line in betting_lines:
+            if line.prop_type not in prop_lines:
+                prop_lines[line.prop_type] = []
+            prop_lines[line.prop_type].append(line.line)
+        
+        # Return average line for each prop
+        return {prop: sum(lines) / len(lines) for prop, lines in prop_lines.items()}
+    
+    def _project_qb_points(self, consensus_lines: Dict[str, float]) -> Tuple[float, Dict[str, float], List[float]]:
+        """Project fantasy points for QB position"""
+        points = 0.0
+        breakdown = {}
+        confidence_scores = []
+        
+        # Passing yards
+        if PropType.PASS_YARDS.value in consensus_lines:
+            yards = consensus_lines[PropType.PASS_YARDS.value]
+            yard_points = yards / self.scoring.pass_yards_per_point
+            points += yard_points
+            breakdown['passing_yards'] = yard_points
+            confidence_scores.append(0.8)  # High confidence for yards props
+        
+        # Passing TDs
+        if PropType.PASS_TDS.value in consensus_lines:
+            tds = consensus_lines[PropType.PASS_TDS.value]
+            td_points = tds * self.scoring.pass_td_points
+            points += td_points
+            breakdown['passing_tds'] = td_points
+            confidence_scores.append(0.7)
+        
+        # Rushing yards (for mobile QBs)
+        if PropType.RUSH_YARDS.value in consensus_lines:
+            rush_yards = consensus_lines[PropType.RUSH_YARDS.value]
+            rush_points = rush_yards / self.scoring.rush_yards_per_point
+            points += rush_points
+            breakdown['rushing_yards'] = rush_points
+            confidence_scores.append(0.6)
+        
+        # Rushing TDs
+        if PropType.RUSH_TDS.value in consensus_lines:
+            rush_tds = consensus_lines[PropType.RUSH_TDS.value]
+            rush_td_points = rush_tds * self.scoring.rush_td_points
+            points += rush_td_points
+            breakdown['rushing_tds'] = rush_td_points
+            confidence_scores.append(0.5)
+        
+        return points, breakdown, confidence_scores
+    
+    def _project_rb_points(self, consensus_lines: Dict[str, float]) -> Tuple[float, Dict[str, float], List[float]]:
+        """Project fantasy points for RB position"""
+        points = 0.0
+        breakdown = {}
+        confidence_scores = []
+        
+        # Rushing yards
+        if PropType.RUSH_YARDS.value in consensus_lines:
+            yards = consensus_lines[PropType.RUSH_YARDS.value]
+            yard_points = yards / self.scoring.rush_yards_per_point
+            points += yard_points
+            breakdown['rushing_yards'] = yard_points
+            confidence_scores.append(0.8)
+        
+        # Rushing TDs
+        if PropType.RUSH_TDS.value in consensus_lines:
+            tds = consensus_lines[PropType.RUSH_TDS.value]
+            td_points = tds * self.scoring.rush_td_points
+            points += td_points
+            breakdown['rushing_tds'] = td_points
+            confidence_scores.append(0.6)
+        
+        # Receiving (for pass-catching RBs)
+        if PropType.RECEPTIONS.value in consensus_lines:
+            receptions = consensus_lines[PropType.RECEPTIONS.value]
+            rec_points = receptions * self.scoring.reception_points
+            points += rec_points
+            breakdown['receptions'] = rec_points
+            confidence_scores.append(0.7)
+        
+        if PropType.RECEIVING_YARDS.value in consensus_lines:
+            rec_yards = consensus_lines[PropType.RECEIVING_YARDS.value]
+            rec_yard_points = rec_yards / self.scoring.receiving_yards_per_point
+            points += rec_yard_points
+            breakdown['receiving_yards'] = rec_yard_points
+            confidence_scores.append(0.7)
+        
+        return points, breakdown, confidence_scores
+    
+    def _project_wr_points(self, consensus_lines: Dict[str, float]) -> Tuple[float, Dict[str, float], List[float]]:
+        """Project fantasy points for WR position"""
+        points = 0.0
+        breakdown = {}
+        confidence_scores = []
+        
+        # Receptions
+        if PropType.RECEPTIONS.value in consensus_lines:
+            receptions = consensus_lines[PropType.RECEPTIONS.value]
+            rec_points = receptions * self.scoring.reception_points
+            points += rec_points
+            breakdown['receptions'] = rec_points
+            confidence_scores.append(0.8)
+        
+        # Receiving yards
+        if PropType.RECEIVING_YARDS.value in consensus_lines:
+            yards = consensus_lines[PropType.RECEIVING_YARDS.value]
+            yard_points = yards / self.scoring.receiving_yards_per_point
+            points += yard_points
+            breakdown['receiving_yards'] = yard_points
+            confidence_scores.append(0.8)
+        
+        # Receiving TDs
+        if PropType.RECEIVING_TDS.value in consensus_lines:
+            tds = consensus_lines[PropType.RECEIVING_TDS.value]
+            td_points = tds * self.scoring.receiving_td_points
+            points += td_points
+            breakdown['receiving_tds'] = td_points
+            confidence_scores.append(0.6)
+        
+        return points, breakdown, confidence_scores
+    
+    def _project_te_points(self, consensus_lines: Dict[str, float]) -> Tuple[float, Dict[str, float], List[float]]:
+        """Project fantasy points for TE position (same as WR for most leagues)"""
+        return self._project_wr_points(consensus_lines)
     
     def get_all_players_in_game(self, home_team: str, away_team: str) -> List[PlayerProps]:
         """
-        Get betting lines for all players in a specific game.
+        Get fantasy analysis for all players in a specific game.
         
         Args:
             home_team: Home team name
@@ -245,18 +737,30 @@ class NFLBettingLinesFetcher:
                         )
                         players_dict[player_name].append(line)
         
-        # Convert to PlayerProps list
+        # Convert to PlayerProps list with fantasy analysis
         result = []
         game_time = datetime.fromisoformat(target_game['commence_time'].replace('Z', '+00:00'))
         
-        for player_name, props in players_dict.items():
+        for player_name, betting_lines in players_dict.items():
+            position = self.position_map.get(player_name)
             player_team = self._determine_player_team(target_game, player_name)
+            
+            roster_info = PlayerRosterInfo(
+                player_name=player_name,
+                position=position,
+                team=player_team or home_team,
+                opponent=away_team if player_team == home_team else home_team,
+                game_time=game_time
+            )
+            
+            fantasy_projection = self._generate_fantasy_projection(player_name, position, betting_lines)
+            
             result.append(PlayerProps(
                 player_name=player_name,
-                team=player_team,
-                opponent=away_team if player_team == home_team else home_team,
-                game_time=game_time,
-                props=props
+                position=position,
+                roster_info=roster_info,
+                betting_lines=betting_lines,
+                fantasy_projection=fantasy_projection
             ))
         
         return result
@@ -271,6 +775,8 @@ class NFLBettingLinesFetcher:
             if time.time() - cached_time < self._cache_timeout:
                 return cached_data
         
+        print("📊 Fetching NFL games...")
+        
         url = f"{self.ODDS_API_BASE}/sports/americanfootball_nfl/events"
         params = {
             'apiKey': self.api_key,
@@ -278,9 +784,15 @@ class NFLBettingLinesFetcher:
         }
         
         response = self.session.get(url, params=params)
+        
+        if response.status_code != 200:
+            print(f"❌ Failed to fetch games: {response.status_code}")
+            return []
+            
         response.raise_for_status()
         
         games = response.json()
+        print(f"✅ Found {len(games)} games")
         
         # Cache the result
         self._cache[cache_key] = (time.time(), games)
@@ -326,30 +838,26 @@ class NFLBettingLinesFetcher:
             'dateFormat': 'iso'
         }
         
-        print(f"Making API call to: {url}")
-        print(f"With params: {params}")
-        
         response = self.session.get(url, params=params)
         
         # Handle rate limiting
         if response.status_code == 429:
-            print("Rate limited, waiting 2 seconds...")
+            print("\n⏳ Rate limited, waiting 2 seconds...")
             time.sleep(2)
             response = self.session.get(url, params=params)
         
-        print(f"Response status: {response.status_code}")
         if response.status_code != 200:
-            print(f"Response text: {response.text}")
+            print(f"\n❌ API Error {response.status_code}: {response.text}")
             return []  # Return empty list instead of crashing
             
         try:
             data = response.json()
             bookmakers_data = data.get('bookmakers', [])
         except requests.exceptions.JSONDecodeError as e:
-            print(f"JSON decode error: {e}")
+            print(f"\n❌ JSON decode error: {e}")
             return []
         except Exception as e:
-            print(f"Unexpected error: {e}")
+            print(f"\n❌ Unexpected error: {e}")
             return []
         
         # Cache the result
@@ -428,7 +936,7 @@ class NFLBettingLinesFetcher:
         
         # Group by prop type
         props_by_type = {}
-        for prop in player_props.props:
+        for prop in player_props.betting_lines:
             if prop.prop_type not in props_by_type:
                 props_by_type[prop.prop_type] = []
             props_by_type[prop.prop_type].append(prop)
@@ -441,149 +949,215 @@ class NFLBettingLinesFetcher:
         
         return best_lines
     
-    def compare_to_projection(self, player_props: PlayerProps, projection: float, 
-                            prop_type: PropType) -> Dict[str, Any]:
+    def find_value_plays(self, roster_players: List[str], threshold: float = 5.0) -> List[Dict[str, Any]]:
         """
-        Compare betting lines to your projection to find value.
+        Find players who are projected to outperform expectations based on betting lines.
         
         Args:
-            player_props: PlayerProps object
-            projection: Your projected value for the prop
-            prop_type: The type of prop to analyze
+            roster_players: List of player names to analyze
+            threshold: Minimum confidence score to consider a value play
             
         Returns:
-            Dictionary with value analysis
+            List of value play analyses sorted by potential value
         """
-        relevant_props = [p for p in player_props.props if p.prop_type == prop_type.value]
+        value_plays = []
         
-        if not relevant_props:
-            return {"error": f"No lines found for {prop_type.value}"}
+        for player_name in roster_players:
+            try:
+                analysis = self.get_player_analysis(player_name)
+                if analysis.fantasy_projection and analysis.fantasy_projection.confidence >= (threshold / 10):
+                    # Calculate value based on confidence and projection
+                    value_score = analysis.fantasy_projection.projected_points * analysis.fantasy_projection.confidence
+                    
+                    value_plays.append({
+                        'player_name': player_name,
+                        'position': analysis.position.value if analysis.position else 'Unknown',
+                        'projected_points': analysis.fantasy_projection.projected_points,
+                        'confidence': analysis.fantasy_projection.confidence,
+                        'value_score': value_score,
+                        'breakdown': analysis.fantasy_projection.breakdown,
+                        'team': analysis.roster_info.team if analysis.roster_info else 'Unknown',
+                        'opponent': analysis.roster_info.opponent if analysis.roster_info else 'Unknown'
+                    })
+            except Exception as e:
+                print(f"Could not analyze {player_name}: {e}")
+                continue
         
-        value_bets = []
+        # Sort by value score
+        value_plays.sort(key=lambda x: x['value_score'], reverse=True)
         
-        for prop in relevant_props:
-            # Calculate implied probabilities
-            over_prob = self._american_to_probability(prop.over_odds) if prop.over_odds else None
-            under_prob = self._american_to_probability(prop.under_odds) if prop.under_odds else None
+        return value_plays
+    
+    def get_matchup_analysis(self, team1: str, team2: str) -> Dict[str, Any]:
+        """
+        Get comprehensive matchup analysis for all players in a game.
+        
+        Args:
+            team1: First team name
+            team2: Second team name
             
-            # Determine if there's value
-            if projection > prop.line and over_prob:
-                # We think over will hit
-                expected_value = (1 - over_prob) * 100  # Simplified EV calculation
-                value_bets.append({
-                    'bookmaker': prop.bookmaker,
-                    'bet': 'Over',
-                    'line': prop.line,
-                    'odds': prop.over_odds,
-                    'implied_prob': over_prob,
-                    'expected_value': expected_value,
-                    'projection': projection
-                })
-            elif projection < prop.line and under_prob:
-                # We think under will hit
-                expected_value = (1 - under_prob) * 100
-                value_bets.append({
-                    'bookmaker': prop.bookmaker,
-                    'bet': 'Under',
-                    'line': prop.line,
-                    'odds': prop.under_odds,
-                    'implied_prob': under_prob,
-                    'expected_value': expected_value,
-                    'projection': projection
-                })
+        Returns:
+            Dictionary with matchup analysis
+        """
+        try:
+            all_players = self.get_all_players_in_game(team1, team2)
+        except ValueError:
+            # Try reversed team order
+            all_players = self.get_all_players_in_game(team2, team1)
         
-        # Sort by expected value
-        value_bets.sort(key=lambda x: x['expected_value'], reverse=True)
+        # Separate by team
+        team1_players = []
+        team2_players = []
+        
+        for player in all_players:
+            if player.roster_info:
+                if player.roster_info.team.lower() in team1.lower():
+                    team1_players.append(player)
+                else:
+                    team2_players.append(player)
+        
+        # Sort by projected points
+        team1_players.sort(key=lambda x: x.fantasy_projection.projected_points if x.fantasy_projection else 0, reverse=True)
+        team2_players.sort(key=lambda x: x.fantasy_projection.projected_points if x.fantasy_projection else 0, reverse=True)
+        
+        # Calculate team totals
+        team1_total = sum(p.fantasy_projection.projected_points if p.fantasy_projection else 0 for p in team1_players)
+        team2_total = sum(p.fantasy_projection.projected_points if p.fantasy_projection else 0 for p in team2_players)
         
         return {
-            'player': player_props.player_name,
-            'prop_type': prop_type.value,
-            'projection': projection,
-            'value_bets': value_bets
+            'matchup': f"{team1} vs {team2}",
+            'team1': {
+                'name': team1,
+                'total_projected_points': team1_total,
+                'top_players': [p.to_dict() for p in team1_players[:5]],
+                'player_count': len(team1_players)
+            },
+            'team2': {
+                'name': team2,
+                'total_projected_points': team2_total,
+                'top_players': [p.to_dict() for p in team2_players[:5]],
+                'player_count': len(team2_players)
+            },
+            'game_total': team1_total + team2_total,
+            'projected_favorite': team1 if team1_total > team2_total else team2
         }
     
-    def _american_to_probability(self, odds: int) -> float:
-        """Convert American odds to implied probability"""
-        if odds > 0:
-            return 100 / (odds + 100)
-        else:
-            return abs(odds) / (abs(odds) + 100)
-    
     def export_to_json(self, player_props: PlayerProps, filename: str):
-        """Export player props to JSON file"""
+        """Export player analysis to JSON file"""
         with open(filename, 'w') as f:
             json.dump(player_props.to_dict(), f, indent=2)
     
     def export_to_csv(self, player_props: PlayerProps, filename: str):
-        """Export player props to CSV file"""
+        """Export player analysis to CSV file"""
         import csv
         
         with open(filename, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Player', 'Prop Type', 'Line', 'Over Odds', 'Under Odds', 
-                           'Bookmaker', 'Last Update'])
+            writer.writerow(['Player', 'Position', 'Team', 'Opponent', 'Projected Points', 
+                           'Confidence', 'Prop Type', 'Line', 'Over Odds', 'Under Odds', 'Bookmaker'])
             
-            for prop in player_props.props:
+            for line in player_props.betting_lines:
                 writer.writerow([
-                    prop.player_name,
-                    prop.prop_type,
-                    prop.line,
-                    prop.over_odds,
-                    prop.under_odds,
-                    prop.bookmaker,
-                    prop.last_update
+                    player_props.player_name,
+                    player_props.position.value if player_props.position else 'Unknown',
+                    player_props.roster_info.team if player_props.roster_info else 'Unknown',
+                    player_props.roster_info.opponent if player_props.roster_info else 'Unknown',
+                    player_props.fantasy_projection.projected_points if player_props.fantasy_projection else 0,
+                    player_props.fantasy_projection.confidence if player_props.fantasy_projection else 0,
+                    line.prop_type,
+                    line.line,
+                    line.over_odds,
+                    line.under_odds,
+                    line.bookmaker
                 ])
 
 
 # Example usage
 if __name__ == "__main__":
-    # Initialize the fetcher (API key loaded from .env file automatically)
+    # Initialize the analyzer (API key loaded from .env file automatically)
     # Make sure you have ODDS_API_KEY set in your .env file
     # Get a free key at: https://the-odds-api.com
-    fetcher = NFLBettingLinesFetcher()
+    analyzer = FantasyEdgeAnalyzer()
     
-    # Example 1: Get all lines for a specific player
-    print("Fetching lines for Dak Prescott...")
-    dak_props = fetcher.get_player_lines("Dak Prescott")
-    
-    # Example 1: Get all lines for a specific player
-    print("Fetching lines for Dak Prescott...")
-    dak_props = fetcher.get_player_lines("Dak Prescott")
-    
-    print(f"\nFound {len(dak_props.props)} betting lines for {dak_props.player_name}")
-    print(f"Team: {dak_props.team} vs {dak_props.opponent}")
-    print(f"Game Time: {dak_props.game_time}")
-    
-    # Show best lines
-    best_lines = fetcher.get_best_lines(dak_props)
-    print("\nBest available lines:")
-    for prop_type, line in best_lines.items():
-        print(f"  {prop_type}: {line.line} (O{line.over_odds}/U{line.under_odds}) @ {line.bookmaker}")
-    
-    # Example 2: Find value bets based on your projection
-    my_projection = 285.5  # Your projection for passing yards
-    value_analysis = fetcher.compare_to_projection(
-        dak_props, 
-        my_projection, 
-        PropType.PASS_YARDS
+    # Set up your league scoring (example: half PPR)
+    scoring = FantasyScoring(
+        reception_points=0.5,  # Half PPR
+        pass_yards_per_point=25,
+        rush_yards_per_point=10,
+        receiving_yards_per_point=10
     )
+    analyzer.set_scoring(scoring)
     
-    print(f"\nValue Analysis for {value_analysis['prop_type']}:")
-    print(f"Your projection: {value_analysis['projection']}")
-    if value_analysis.get('value_bets'):
-        print("Value bets found:")
-        for bet in value_analysis['value_bets'][:3]:  # Top 3 value bets
-            print(f"  {bet['bookmaker']}: {bet['bet']} {bet['line']} @ {bet['odds']} "
-                  f"(EV: {bet['expected_value']:.2f}%)")
+    print("=== FANTASY EDGE ANALYZER ===\n")
     
-    # Example 3: Export to file
-    fetcher.export_to_json(dak_props, "dak_prescott_lines.json")
-    fetcher.export_to_csv(dak_props, "dak_prescott_lines.csv")
-    print("\nData exported to JSON and CSV files")
+    # Example 1: Compare two quarterbacks
+    print("1. PLAYER COMPARISON")
+    print("Comparing Josh Allen vs Lamar Jackson...")
+    try:
+        comparison = analyzer.compare_players("Josh Allen", "Lamar Jackson")
+        print(f"Recommendation: {comparison['recommendation']}")
+        print(f"Point difference: {comparison['analysis']['point_difference']:.2f}")
+        print(f"Confidence difference: {comparison['analysis']['confidence_difference']:.2f}\n")
+    except Exception as e:
+        print(f"Comparison failed: {e}\n")
     
-    # Example 4: Get all players in a game
-    print("\n\nFetching all players in Cowboys vs Eagles...")
-    all_players = fetcher.get_all_players_in_game("Philadelphia Eagles", "Dallas Cowboys")
-    print(f"Found lines for {len(all_players)} players")
-    for player in all_players[:5]:  # Show first 5
-        print(f"  {player.player_name}: {len(player.props)} props available")
+    # Example 2: Analyze a single player
+    print("2. SINGLE PLAYER ANALYSIS")
+    print("Analyzing Dak Prescott...")
+    try:
+        dak_analysis = analyzer.get_player_analysis("Dak Prescott")
+        if dak_analysis.fantasy_projection:
+            print(f"Projected Points: {dak_analysis.fantasy_projection.projected_points:.2f}")
+            print(f"Confidence: {dak_analysis.fantasy_projection.confidence:.2f}")
+            print("Point Breakdown:")
+            for category, points in dak_analysis.fantasy_projection.breakdown.items():
+                print(f"  {category}: {points:.2f}")
+        print(f"Available betting lines: {len(dak_analysis.betting_lines)}\n")
+    except Exception as e:
+        print(f"Analysis failed: {e}\n")
+    
+    # Example 3: Optimize lineup from roster
+    print("3. LINEUP OPTIMIZATION")
+    my_roster = [
+        "Josh Allen", "Dak Prescott",  # QBs
+        "Saquon Barkley", "Derrick Henry", "Alvin Kamara",  # RBs  
+        "Tyreek Hill", "Davante Adams", "Cooper Kupp",  # WRs
+        "Travis Kelce", "Mark Andrews"  # TEs
+    ]
+    
+    try:
+        optimal_lineup = analyzer.optimize_lineup(my_roster)
+        print("Optimal Lineup:")
+        for position, players in optimal_lineup['optimal_lineup'].items():
+            print(f"  {position}: {', '.join(players)}")
+        print(f"Total Projected Points: {optimal_lineup['total_projected_points']:.2f}\n")
+    except Exception as e:
+        print(f"Lineup optimization failed: {e}\n")
+    
+    # Example 4: Find value plays
+    print("4. VALUE PLAYS")
+    try:
+        value_plays = analyzer.find_value_plays(my_roster)
+        print("Top 3 Value Plays:")
+        for i, play in enumerate(value_plays[:3], 1):
+            print(f"  {i}. {play['player_name']} ({play['position']}) - "
+                  f"{play['projected_points']:.2f} pts (Confidence: {play['confidence']:.2f})")
+        print()
+    except Exception as e:
+        print(f"Value analysis failed: {e}\n")
+    
+    # Example 5: Export data
+    try:
+        analyzer.export_to_json(dak_analysis, "dak_prescott_fantasy_analysis.json")
+        analyzer.export_to_csv(dak_analysis, "dak_prescott_fantasy_analysis.csv")
+        print("5. DATA EXPORT")
+        print("Fantasy analysis exported to JSON and CSV files\n")
+    except Exception as e:
+        print(f"Export failed: {e}\n")
+    
+    print("=== Analysis Complete ===")
+    print("Tips:")
+    print("- Higher confidence scores indicate more reliable projections")
+    print("- Compare players at the same position for best results")
+    print("- Consider matchup context and injury reports")
+    print("- Use value plays to identify potential sleepers")
