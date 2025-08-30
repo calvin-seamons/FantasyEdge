@@ -16,6 +16,8 @@ import json
 from dataclasses import dataclass, asdict
 from enum import Enum
 import time
+import os
+from dotenv import load_dotenv
 
 
 class PropType(Enum):
@@ -102,8 +104,12 @@ class NFLBettingLinesFetcher:
     Main class to fetch NFL player betting lines from various sources.
     
     Usage:
-        fetcher = NFLBettingLinesFetcher(api_key="your_api_key")
+        # API key will be loaded from .env file automatically
+        fetcher = NFLBettingLinesFetcher()
         lines = fetcher.get_player_lines("Dak Prescott")
+        
+        # Or provide API key directly
+        fetcher = NFLBettingLinesFetcher(api_key="your_api_key")
     """
     
     # The Odds API endpoints
@@ -125,10 +131,15 @@ class NFLBettingLinesFetcher:
         Initialize the fetcher with API credentials.
         
         Args:
-            api_key: The Odds API key (get free tier at https://the-odds-api.com)
+            api_key: The Odds API key (get free tier at https://the-odds-api.com).
+                     If not provided, will attempt to load from ODDS_API_KEY environment variable.
             bookmakers: List of bookmaker keys to fetch from
         """
-        self.api_key = api_key
+        # Load environment variables from .env file
+        load_dotenv()
+        
+        # Get API key from parameter or environment variable
+        self.api_key = api_key or os.getenv('ODDS_API_KEY')
         self.bookmakers = bookmakers or self.DEFAULT_BOOKMAKERS
         self.session = requests.Session()
         self.session.headers.update({
