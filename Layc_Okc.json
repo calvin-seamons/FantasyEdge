@@ -1,0 +1,64 @@
+{
+  "leagueSettings": {
+    "scoringType": "Head-to-Head",
+    "rosterPositions": ["QB", "WR", "WR", "RB", "RB", "TE", "W/R/T", "K", "DEF", "BN", "BN", "BN", "BN", "BN", "BN"],
+    "fractionalPoints": true,
+    "negativePoints": true,
+    "playoffWeeks": [15, 16, 17]
+  },
+  "scoring": {
+    "offense": {
+      "passingYards": 0.05,
+      "passingTouchdowns": 6,
+      "interceptions": -1,
+      "rushingYards": 0.1,
+      "rushingTouchdowns": 6,
+      "receptions": 1,
+      "receivingYards": 0.1,
+      "receivingTouchdowns": 6,
+      "returnYards": 0.1,
+      "returnTouchdowns": 6,
+      "twoPointConversions": 2,
+      "fumblesLost": -2,
+      "offensiveFumbleReturnTD": 6,
+      "pickSixesThrown": -2,
+      "fortyPlusYardCompletions": 3,
+      "fortyPlusYardPassingTouchdowns": 4,
+      "fortyPlusYardRun": 3,
+      "fortyPlusYardRushingTouchdowns": 4,
+      "fortyPlusYardReceptions": 3,
+      "fortyPlusYardReceivingTouchdowns": 4
+    },
+    "kickers": {
+      "fieldGoals0to19": 3,
+      "fieldGoals20to29": 3,
+      "fieldGoals30to39": 3,
+      "fieldGoals40to49": 4,
+      "fieldGoals50Plus": 5,
+      "fieldGoalsMissed0to19": -1,
+      "fieldGoalsMissed20to29": -1,
+      "fieldGoalsMissed30to39": -1,
+      "pointAfterAttemptMade": 1,
+      "pointAfterAttemptMissed": -1
+    },
+    "defense": {
+      "sack": 1,
+      "interception": 2,
+      "fumbleRecovery": 2,
+      "touchdown": 6,
+      "safety": 2,
+      "blockKick": 2,
+      "returnYards": 0.1,
+      "kickoffAndPuntReturnTouchdowns": 6,
+      "pointsAllowed0": 20,
+      "pointsAllowed1to6": 12,
+      "pointsAllowed7to13": 8,
+      "pointsAllowed14to20": 5,
+      "pointsAllowed21to27": 2,
+      "defensiveYardsAllowed0to99": 5,
+      "defensiveYardsAllowed100to199": 4,
+      "defensiveYardsAllowed200to299": 3,
+      "extraPointReturned": 2
+    }
+  }
+}

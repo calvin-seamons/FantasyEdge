@@ -1,0 +1,67 @@
+{
+  "leagueSettings": {
+    "scoringType": "Head to Head Points",
+    "rosterPositions": ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX", "D/ST", "BE", "BE", "BE", "BE", "BE", "BE", "BE", "IR"],
+    "fractionalPoints": true,
+    "negativePoints": true,
+    "playoffWeeks": [15, 16, 17, 18]
+  },
+  "scoring": {
+    "offense": {
+      "passingYards": 0.04,
+      "passingTouchdowns": 4,
+      "interceptions": -2,
+      "rushingYards": 0.1,
+      "rushingTouchdowns": 6,
+      "receivingYards": 0.1,
+      "receivingTouchdowns": 6,
+      "twoPointConversions": 2,
+      "fumblesLost": -2,
+      "kickoffReturnTD": 6,
+      "puntReturnTD": 6,
+      "fumbleRecoveredForTD": 6,
+      "interceptionReturnTD": 6,
+      "fumbleReturnTD": 6,
+      "blockedPuntFGReturnTD": 6,
+      "twoPointReturn": 2,
+      "onePointSafety": 1
+    },
+    "kickers": {
+      "pointAfterAttemptMade": 1,
+      "fieldGoalMissed": -1,
+      "fieldGoals0to39": 3,
+      "fieldGoals40to49": 4,
+      "fieldGoals50to59": 5,
+      "fieldGoals60Plus": 5
+    },
+    "defense": {
+      "sack": 1,
+      "interception": 2,
+      "fumbleRecovery": 2,
+      "safety": 2,
+      "blockedKick": 2,
+      "kickoffReturnTD": 6,
+      "puntReturnTD": 6,
+      "interceptionReturnTD": 6,
+      "fumbleReturnTD": 6,
+      "blockedPuntFGReturnTD": 6,
+      "twoPointReturn": 2,
+      "onePointSafety": 1,
+      "pointsAllowed0": 5,
+      "pointsAllowed1to6": 4,
+      "pointsAllowed7to13": 3,
+      "pointsAllowed14to17": 1,
+      "pointsAllowed28to34": -1,
+      "pointsAllowed35to45": -3,
+      "pointsAllowed46Plus": -5,
+      "yardsAllowedUnder100": 5,
+      "yardsAllowed100to199": 3,
+      "yardsAllowed200to299": 2,
+      "yardsAllowed350to399": -1,
+      "yardsAllowed400to449": -3,
+      "yardsAllowed450to499": -5,
+      "yardsAllowed500to549": -6,
+      "yardsAllowed550Plus": -7
+    }
+  }
+}
