@@ -109,7 +109,7 @@ class NFLBettingLinesFetcher:
         lines = fetcher.get_player_lines("Dak Prescott")
         
         # Or provide API key directly
-        fetcher = NFLBettingLinesFetcher(api_key="your_api_key")
+        fetcher = NFLBettingLinesFetcher(api_key="your_api_key_here")
     """
     
     # The Odds API endpoints
@@ -537,11 +537,14 @@ class NFLBettingLinesFetcher:
 
 # Example usage
 if __name__ == "__main__":
-    # Initialize with your API key
+    # Initialize the fetcher (API key loaded from .env file automatically)
+    # Make sure you have ODDS_API_KEY set in your .env file
     # Get a free key at: https://the-odds-api.com
-    API_KEY = "REMOVED_API_KEY"
+    fetcher = NFLBettingLinesFetcher()
     
-    fetcher = NFLBettingLinesFetcher(api_key=API_KEY)
+    # Example 1: Get all lines for a specific player
+    print("Fetching lines for Dak Prescott...")
+    dak_props = fetcher.get_player_lines("Dak Prescott")
     
     # Example 1: Get all lines for a specific player
     print("Fetching lines for Dak Prescott...")
